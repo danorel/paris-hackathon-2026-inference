@@ -22,7 +22,11 @@ export ATTN_IMPLEMENTATION="${ATTN_IMPLEMENTATION:-sdpa}"
 
 mkdir -p results
 
-echo "[start.sh] Starting inference server on ${HOST}:${PORT} (attn=${ATTN_IMPLEMENTATION})"
+# Use a single GPU (GPU 1 by default — GPU 0 is occupied by shared vLLM).
+# Qwen3.5-35B-A3B in BF16 is ~70 GB, fits comfortably on one H200 (141 GB).
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-1}"
+
+echo "[start.sh] Starting inference server on ${HOST}:${PORT}"
 
 exec uvicorn server.main:app \
     --host "$HOST" \

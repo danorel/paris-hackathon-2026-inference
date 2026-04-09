@@ -13,7 +13,7 @@ from typing import Optional
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from .config import ATTN_IMPLEMENTATION, BATCH_TIMEOUT, MAX_BATCH_SIZE, MODEL_PATH
+from .config import ATTN_IMPLEMENTATION, BATCH_TIMEOUT, MAX_BATCH_SIZE, MODEL_PATH, USE_TP
 
 logger = logging.getLogger(__name__)
 
@@ -44,13 +44,29 @@ class InferenceEngine:
         if self.tokenizer.pad_token_id is None:
             self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
 
-        logger.info("Loading model from %s (BF16, device_map=auto, attn=%s)", MODEL_PATH, ATTN_IMPLEMENTATION)
-        self.model = AutoModelForCausalLM.from_pretrained(
-            MODEL_PATH,
-            torch_dtype=torch.bfloat16,
-            device_map="auto",
-            attn_implementation=ATTN_IMPLEMENTATION,
-        )
+        if USE_TP:
+            n_gpus = torch.cuda.device_count()
+            logger.info(
+                "Loading model from %s (BF16, tensor_parallel across %d GPUs)",
+                MODEL_PATH, n_gpus,
+            )
+            import tensor_parallel as tp  # noqa: PLC0415
+            # Load on CPU first, then shard across all GPUs
+            model = AutoModelForCausalLM.from_pretrained(
+                MODEL_PATH,
+                torch_dtype=torch.bfloat16,
+            )
+            gpus = [f"cuda:{i}" for i in range(n_gpus)]
+            self.model = tp.tensor_parallel(model, gpus)
+            self._primary_device = torch.device("cuda:0")
+        else:
+            logger.info("Loading model from %s (BF16, single GPU)", MODEL_PATH)
+            self.model = AutoModelForCausalLM.from_pretrained(
+                MODEL_PATH,
+                torch_dtype=torch.bfloat16,
+            ).to("cuda")
+            self._primary_device = torch.device("cuda")
+
         self.model.eval()
         logger.info("Model loaded — %d parameters", sum(p.numel() for p in self.model.parameters()))
 
@@ -163,8 +179,8 @@ class InferenceEngine:
             padding=True,
             truncation=False,
         )
-        input_ids = encoded["input_ids"].to(self.model.device)
-        attention_mask = encoded["attention_mask"].to(self.model.device)
+        input_ids = encoded["input_ids"].to(self._primary_device)
+        attention_mask = encoded["attention_mask"].to(self._primary_device)
         prompt_lengths = attention_mask.sum(dim=1).tolist()
 
         max_new_tokens = max(req.max_tokens for req in batch)
