@@ -14,3 +14,9 @@ BATCH_TIMEOUT = float(os.environ.get("BATCH_TIMEOUT", "0.02"))  # seconds
 
 # Attention implementation: "flash_attention_2", "sdpa", or "eager"
 ATTN_IMPLEMENTATION = os.environ.get("ATTN_IMPLEMENTATION", "sdpa")
+
+# Engine mode:
+#   0 — static batching, eager attention   (Iter 0 baseline)
+#   1 — static batching, SDPA attention    (Iter 1 baseline)
+#   2 — continuous batching, SDPA          (Iter 2, default)
+ENGINE_MODE = int(os.environ.get("ENGINE_MODE", "2"))

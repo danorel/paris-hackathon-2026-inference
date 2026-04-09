@@ -15,8 +15,20 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from .config import MODEL_NAME
-from .engine import InferenceEngine
+from .config import ATTN_IMPLEMENTATION, ENGINE_MODE, MODEL_NAME
+
+# ------------------------------------------------------------------
+# Environment
+# ------------------------------------------------------------------
+
+if ENGINE_MODE == 2:
+    from .engine_continious import InferenceEngine
+else:
+    # Iter 0 (eager) or Iter 1 (SDPA) — static batching
+    import os
+    if ENGINE_MODE == 0:
+        os.environ.setdefault("ATTN_IMPLEMENTATION", "eager")
+    from .engine_static import StaticBatchingEngine as InferenceEngine  # type: ignore[assignment]
 
 logging.basicConfig(
     level=logging.INFO,
@@ -24,14 +36,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-engine: InferenceEngine = None  # initialised in lifespan
+engine_continious: InferenceEngine = None  # initialised in lifespan
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global engine
-    engine = InferenceEngine()
-    await engine.start()
+    global engine_continious
+    engine_continious = InferenceEngine()
+    await engine_continious.start()
     logger.info("Server ready")
     yield
 
@@ -100,7 +112,7 @@ async def chat_completions(request: ChatCompletionRequest):
 
     messages = [{"role": m.role, "content": m.content} for m in request.messages]
 
-    result = await engine.generate(
+    result = await engine_continious.generate(
         messages=messages,
         max_tokens=request.max_tokens,
         temperature=request.temperature,
