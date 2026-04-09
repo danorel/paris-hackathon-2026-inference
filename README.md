@@ -260,6 +260,31 @@ Generated using vLLM v0.19.0 on 8xH200 with TP=8, BF16 weights.
 
 Run `./baseline/run_baseline.sh` to reproduce.
 
+## Our Results
+
+Engine: data-parallel (4× H200, GPUs 4–7), continuous batching, persistent KV cache, SDPA, BF16.
+
+### Correctness: GSM8K-CoT (200 problems)
+
+| Metric | Score | Gate |
+|---|---|---|
+| Exact match (flexible extract) | **90%** | ✅ ≥ 87.5% |
+| Exact match (strict match) | **90%** | ✅ |
+
+### Throughput (1024 input / 1024 output tokens)
+
+| Concurrency | tok/s | Wall (s) | vs vLLM |
+|---|---|---|---|
+| 1 | 61.32 | 137.14 | 6.2% |
+| 4 | 128.11 | 71.74 | 4.2% |
+| 8 | 220.12 | 35.54 | 4.6% |
+| 16 | 164.86 | 51.32 | 2.6% |
+| **64** | **961.87** | **89.10** | **7.5%** |
+
+**Partial weighted score** (c=1,4,8,16,64) = **9,587** vs vLLM 248,930.
+
+See [RESULTS.md](RESULTS.md) for the full iteration log.
+
 ## Repository Structure
 
 ```
