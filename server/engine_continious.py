@@ -99,9 +99,9 @@ class InferenceEngine:
             try:
                 self.model = torch.compile(
                     self.model,
-                    mode="reduce-overhead",
-                    dynamic=True,
-                    fullgraph=False,
+                    mode="max-autotune-no-cudagraphs",  # best Triton kernels for H200 (wgmma)
+                    dynamic=True,   # handles dynamic batch size + growing KV cache
+                    fullgraph=False,  # allows fallback for DeltaNet ops not yet supported
                 )
                 logger.info("torch.compile enabled")
             except Exception as exc:
