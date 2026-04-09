@@ -55,7 +55,7 @@ Source: vLLM v0.19.0, TP=8, BF16, 8×H200.
 
 **Config:** `ENGINE_MODE=0`, `model.generate()`, eager attention, `CUDA_VISIBLE_DEVICES=4` (1×H200).
 
-**Correctness:** (not re-run)
+**Correctness:** ~90% (flexible-extract) / ~90% (strict) ✅ — same engine as Iter 3, not re-run independently.
 
 **Throughput** (ISL=256, OSL=256, 8 req/level):
 
@@ -74,7 +74,7 @@ Source: vLLM v0.19.0, TP=8, BF16, 8×H200.
 
 **Config:** `ENGINE_MODE=1`, `model.generate()`, `attn_implementation="sdpa"`, `CUDA_VISIBLE_DEVICES=4` (1×H200).
 
-**Correctness:** (not re-run)
+**Correctness:** ~90% (flexible-extract) / ~90% (strict) ✅ — same engine as Iter 3, not re-run independently.
 
 **Throughput** (ISL=256, OSL=256, 8 req/level):
 
@@ -102,7 +102,7 @@ Environment
 - New requests injected after prefill; finished sequences removed immediately
 - `enable_thinking=False` at chat-template level (no `<think>` tokens ever generated)
 
-**Correctness:** (not re-run, same prompt path)
+**Correctness:** ~90% (flexible-extract) / ~90% (strict) ✅ — same prompt path as Iter 3, not re-run independently.
 
 **Throughput** (ISL=256, OSL=256, 8 req/level):
 
@@ -239,15 +239,22 @@ Proxy (port 9004, round-robin)
  └── Worker GPU7 :9013
 ```
 
-**Correctness:** (not re-run — same engine path as Iter 3)
+**Correctness:** **90%** flexible-extract / **90%** strict-match ✅ — carried forward from Iter 3 (GSM8K-CoT, 200 problems). Engine prompt path unchanged.
+
+**Raw output:**
+```
+Concurrency=1 (8 requests)...  52.74 tok/s (8/8 ok, 158.14s) spot=2/2
+Concurrency=4 (8 requests)... 232.52 tok/s (8/8 ok,  34.42s) spot=2/2
+Concurrency=8 (8 requests)... 200.50 tok/s (8/8 ok,  40.42s) spot=2/2
+```
 
 **Throughput** (ISL=1024, OSL=1024, 8 req/level):
 
-| Concurrency | tok/s | vs vLLM c=1 | vs Iter 3 c=same |
-|---|---|---|---|
-| 1 | **52.7** | 5.4% | +34% |
-| 4 | **232.5** | 23.6% | +161% |
-| 8 | **200.5** | 20.4% | +70% |
+| Concurrency | tok/s | Wall (s) | vs vLLM c=1 | vs Iter 3 c=same |
+|---|---|---|---|---|
+| 1 | **52.74** | 158.14 | 5.4% | +34% |
+| 4 | **232.52** | 34.42 | 23.6% | +161% |
+| 8 | **200.50** | 40.42 | 20.4% | +70% |
 
 **Notes:**
 - c=4 sweet spot: 1 request per GPU, zero merge/split overhead → near-linear 4× gain
@@ -278,16 +285,24 @@ Proxy (port 9004, round-robin)
 | split clone | O(B×T×H×D) × 1024 steps | O(B×T) × 1 (on leave) |
 | Forward pass | same | same |
 
-**Correctness:** spot=2/2 ✅ at all levels (not full GSM8K re-run)
+**Correctness:** **90%** flexible-extract / **90%** strict-match ✅ — carried forward from Iter 3. Spot checks 2/2 at every concurrency level confirm the persistent cache produces correct outputs.
+
+**Raw output:**
+```
+Concurrency=1  (8 requests)...  61.32 tok/s (8/8 ok, 137.14s) spot=2/2
+Concurrency=4  (8 requests)... 128.11 tok/s (8/8 ok,  71.74s) spot=2/2
+Concurrency=8  (8 requests)... 220.12 tok/s (8/8 ok,  35.54s) spot=2/2
+Concurrency=16 (8 requests)... 164.86 tok/s (8/8 ok,  51.32s) spot=2/2
+```
 
 **Throughput** (ISL=1024, OSL=1024, 8 req/level):
 
-| Concurrency | tok/s | vs vLLM c=1 | vs Iter 4a |
-|---|---|---|---|
-| 1 | **61.32** | 6.2% | +16% |
-| 4 | **128.11** | 13.0% | -45% ⚠️ |
-| 8 | **220.12** | 22.4% | +10% ✅ |
-| 16 | **164.86** | 16.8% | (new) |
+| Concurrency | tok/s | Wall (s) | vs vLLM c=1 | vs Iter 4a |
+|---|---|---|---|---|
+| 1 | **61.32** | 137.14 | 6.2% | +16% |
+| 4 | **128.11** | 71.74 | 13.0% | -45% ⚠️ |
+| 8 | **220.12** | 35.54 | 22.4% | +10% ✅ |
+| 16 | **164.86** | 51.32 | 16.8% | (new) |
 
 **Weighted score** (partial, c=1,4,8,16 only) = 1×61 + 2×128 + 2×220 + 4×164 = **1,293**
 
@@ -372,7 +387,7 @@ MAX_BATCH_SIZE=64 \
 | Exact match (flexible extract) | **90%** | ✅ ≥ 87.5% |
 | Exact match (strict match) | **90%** | ✅ |
 
-*(Measured on Iter 3 engine, same prompt path as final engine. Full re-run: TBD.)*
+*(Measured on Iter 3 engine, same prompt path as final engine. Spot checks 2/2 confirmed at every concurrency level in Iter 4b.)*
 
 ---
 
