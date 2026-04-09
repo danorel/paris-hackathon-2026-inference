@@ -7,7 +7,7 @@ requires-python = ">=3.12"
 dependencies = [
     "aiohttp>=3.9",
     "lm-eval[api]>=0.4.4",
-    "transformers>=4.45",
+    "transformers>=4.50",
     "tabulate",
     "tqdm",
     "numpy",
@@ -15,6 +15,14 @@ dependencies = [
 
 [project.optional-dependencies]
 baseline = ["vllm>=0.8"]
+server = [
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.29",
+    "uvloop>=0.19",
+    "accelerate>=0.30",
+    "torch>=2.3",
+    "safetensors>=0.4",
+]
 
 [tool.setuptools.packages.find]
 include = ["eval*"]
