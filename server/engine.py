@@ -13,7 +13,7 @@ from typing import Optional
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from .config import BATCH_TIMEOUT, MAX_BATCH_SIZE, MODEL_PATH
+from .config import ATTN_IMPLEMENTATION, BATCH_TIMEOUT, MAX_BATCH_SIZE, MODEL_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -44,11 +44,12 @@ class InferenceEngine:
         if self.tokenizer.pad_token_id is None:
             self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
 
-        logger.info("Loading model from %s (BF16, device_map=auto)", MODEL_PATH)
+        logger.info("Loading model from %s (BF16, device_map=auto, attn=%s)", MODEL_PATH, ATTN_IMPLEMENTATION)
         self.model = AutoModelForCausalLM.from_pretrained(
             MODEL_PATH,
             torch_dtype=torch.bfloat16,
             device_map="auto",
+            attn_implementation=ATTN_IMPLEMENTATION,
         )
         self.model.eval()
         logger.info("Model loaded — %d parameters", sum(p.numel() for p in self.model.parameters()))
@@ -127,17 +128,26 @@ class InferenceEngine:
     # ------------------------------------------------------------------
 
     def _apply_chat_template(self, messages: list[dict]) -> str:
-        """Format messages with thinking enabled.
+        """Format messages with thinking disabled.
 
-        We allow the model to think internally (improves quality and CoT format),
-        but strip <think>...</think> blocks before returning to the client.
-        The server must not emit <think> tags — stripping happens in _strip_thinking().
+        Suppresses <think> tags at the tokenizer level (enable_thinking=False).
+        The _strip_thinking() fallback is kept for safety in case the tokenizer
+        version doesn't support the kwarg.
         """
-        return self.tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True,
-        )
+        try:
+            return self.tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=False,
+            )
+        except TypeError:
+            # Older tokenizer versions don't have enable_thinking
+            return self.tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
 
     def _strip_thinking(self, text: str) -> str:
         """Remove <think>…</think> blocks if the model emits them."""

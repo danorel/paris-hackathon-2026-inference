@@ -7,5 +7,8 @@ SERVER_HOST = os.environ.get("SERVER_HOST", "0.0.0.0")
 SERVER_PORT = int(os.environ.get("SERVER_PORT", "8000"))
 
 # Batching: collect requests for up to BATCH_TIMEOUT seconds before dispatching
-MAX_BATCH_SIZE = int(os.environ.get("MAX_BATCH_SIZE", "8"))
-BATCH_TIMEOUT = float(os.environ.get("BATCH_TIMEOUT", "0.05"))  # seconds
+MAX_BATCH_SIZE = int(os.environ.get("MAX_BATCH_SIZE", "64"))
+BATCH_TIMEOUT = float(os.environ.get("BATCH_TIMEOUT", "0.02"))  # seconds
+
+# Attention implementation: "flash_attention_2", "sdpa", or "eager"
+ATTN_IMPLEMENTATION = os.environ.get("ATTN_IMPLEMENTATION", "sdpa")
