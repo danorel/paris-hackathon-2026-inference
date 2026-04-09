@@ -166,7 +166,7 @@ KV caches from different sequences have different lengths → merged with left-p
 
 ## Iter 2b — Cache API fix for transformers 5.5
 
-**Date:** 2026-04-09
+**Date:** 2026-04-09 / 15:45
 
 **Problem:** `engine_continious.py` was written against the transformers <5 cache API (`cache.key_cache[]`, `cache.value_cache[]`). Transformers 5.5.1 replaced these flat lists with a `cache.layers[]` list of typed layer objects.
 
@@ -192,7 +192,7 @@ AttributeError: 'DynamicCache' object has no attribute 'key_cache'
 
 ## Iter 3 — Batched Decode (cross-sequence) + copy.copy() cache fix
 
-**Date:** 2026-04-09
+**Date:** 2026-04-09 / 16:00
 
 **Config:** `ENGINE_MODE=2`, `USE_BATCHED_DECODE=1`, `MAX_BATCH_SIZE=64`, `CUDA_VISIBLE_DEVICES=4` (1×H200).
 
@@ -226,7 +226,7 @@ AttributeError: 'DynamicCache' object has no attribute 'key_cache'
 
 ## Iter 4a — Data Parallel (4 workers, round-robin proxy)
 
-**Date:** 2026-04-09
+**Date:** 2026-04-09 / 18:30
 
 **Config:** `WORKER_GPUS="4 5 6 7"`, 4 independent full-model replicas, round-robin proxy on port 9004. `USE_BATCHED_DECODE=1`, `MAX_BATCH_SIZE=64`.
 
@@ -259,7 +259,7 @@ Proxy (port 9004, round-robin)
 
 ## Iter 4b — Persistent Batched Cache (no per-step merge/split)
 
-**Date:** 2026-04-09
+**Date:** 2026-04-09 / 19:00
 
 **Changes vs Iter 4a:**
 - Replaced per-step merge→forward→split with a **persistent batched cache**
@@ -313,3 +313,126 @@ Each backend tracks `_active[i]` = number of in-flight requests. New request goe
   Round-robin: req 0,4,8,...,60 → GPU4  (even if GPU4 is slow)
   Least-conn:  GPU4 finishes early → _active[4]=0 → next 16 requests all go to GPU4
 ```
+
+---
+
+## Final Results — Best Configuration
+
+**Date:** 2026-04-09 / 19:24
+
+### Experimental Setup
+
+**Hardware:** 7× NVIDIA H200 (141 GB HBM3e each, NVLink). GPU 0 reserved for shared vLLM on the node.
+
+**Architecture: Data-Parallel Workers + Least-Connections Proxy**
+
+```
+                     ┌─────────────────────────────────────┐
+Client requests  ───►│  Proxy  (FastAPI + httpx, port 9004) │
+                     │  Routing: least-connections           │
+                     │  Retry:   next worker on ConnectError │
+                     └──┬────┬────┬────┬────┬────┬──────────┘
+                        │    │    │    │    │    │
+                   9010 9011 9012 9013 9014 9015 9016
+                    │    │    │    │    │    │    │
+                   GPU1 GPU2 GPU3 GPU4 GPU5 GPU6 GPU7
+                   70GB 70GB 70GB 70GB 70GB 70GB 70GB
+               (full model replica on each GPU, ~85 GB total w/ KV cache)
+```
+
+**Engine: Continuous Batching + Persistent Batched KV Cache**
+
+| Component | Choice | Rationale |
+|---|---|---|
+| Model precision | BF16 | Required by rules |
+| Attention | SDPA (`attn_implementation="sdpa"`) | Flash-Attention pkg unavailable (CUDA 13.0 vs PyTorch 12.8 mismatch) |
+| Batching | Continuous (Orca-style) | No padding waste, sequences finish independently |
+| KV cache | Persistent batched cache | One shared cache object across all active sequences — zero per-step allocation |
+| Compile | `torch.compile(mode="max-autotune-no-cudagraphs", dynamic=True)` | Best Triton kernels for H200 (wgmma); no CUDA graphs since batch size is dynamic |
+| Thinking | Disabled via `enable_thinking=False` in chat template | Prevents `<think>` tokens from inflating output counts |
+| Workers | 7 (one per GPU) | Full model fits per GPU (70 GB model + ~15 GB KV < 141 GB) |
+| Load balancing | Least-connections | Routes to idlest worker; handles unequal request duration |
+| Max batch / worker | 64 | Matches benchmark max concurrency |
+
+**Launch command:**
+```bash
+MODEL_PATH=/path/to/Qwen3.5-35B-A3B \
+WORKER_GPUS="1 2 3 4 5 6 7" \
+USE_COMPILE=1 \
+MAX_BATCH_SIZE=64 \
+./start_multi.sh
+```
+
+---
+
+### Correctness
+
+| Metric | Score | Gate |
+|---|---|---|
+| Exact match (flexible extract) | **90%** | ✅ ≥ 87.5% |
+| Exact match (strict match) | **90%** | ✅ |
+
+*(Measured on Iter 3 engine, same prompt path as final engine. Full re-run: TBD.)*
+
+---
+
+### Throughput
+
+**Best measured — Iter 4b (4 workers, no compile, ISL=1024, OSL=1024, 8 req/level):**
+
+| Concurrency | Weight | tok/s | vs vLLM |
+|---|---|---|---|
+| 1 | 1× | 61.32 | 6.2% |
+| 4 | 2× | 128.11 | 4.2% |
+| 8 | 2× | 220.12 | 4.6% |
+| 16 | 4× | 164.86 | 2.6% |
+| 32 | 4× | TBD | — |
+| 64 | 8× | TBD | — |
+
+**Partial weighted score** (c=1,4,8,16): `1×61 + 2×128 + 2×220 + 4×165` = **1,293**
+
+**Full run with 7 workers + compile:** TBD — fill in after `run_throughput` completes.
+
+| Concurrency | Weight | tok/s | vs vLLM |
+|---|---|---|---|
+| 1 | 1× | TBD | — |
+| 2 | 1× | TBD | — |
+| 4 | 2× | TBD | — |
+| 8 | 2× | TBD | — |
+| 16 | 4× | TBD | — |
+| 32 | 4× | TBD | — |
+| 64 | 8× | TBD | — |
+| **Weighted total** | | **TBD** | **— vs 248,930** |
+
+---
+
+### Optimization Journey — Throughput Progression
+
+*(All numbers at concurrency=8 for comparison. Single-GPU runs use ISL=256; multi-GPU use ISL=1024.)*
+
+| Iter | Config | c=8 tok/s | Key change |
+|---|---|---|---|
+| 0a | 6× GPU, pipeline parallel, eager | 69 | Baseline multi-GPU attempt |
+| 0b | 1× GPU, eager, static batch | ~45 | Pipeline parallel is slower than 1 GPU |
+| 1 | 1× GPU, SDPA, static batch | ~43 | SDPA ≈ eager for DeltaNet hybrid |
+| 2 | 1× GPU, continuous batching | ~43 | Fixed token discrepancy; no throughput gain yet |
+| 3 | 1× GPU, batched decode | **117** | All sequences in one forward pass — 2.8× gain |
+| 4a | 4× GPU, data parallel | 200 | 4 replicas; c=4 was sweet spot (232 tok/s) |
+| 4b | 4× GPU, persistent cache | **220** | Eliminated per-step merge/split; fixed c=8 > c=4 |
+| **Final** | **7× GPU, persistent cache, compile** | **TBD** | +75% from 7 workers + compile gain |
+
+---
+
+### Key Engineering Decisions
+
+**Why data-parallel over tensor-parallel:**
+Tensor parallel (vLLM's approach) splits weight matrices across GPUs and all-reduces every layer — requires deep model surgery (~8 hours). Data parallel runs independent replicas with zero inter-GPU communication. Model fits per H200 (70 GB < 141 GB). Simpler, ships in hours.
+
+**Why persistent batched cache over per-step merge/split:**
+At ISL=1024, the per-step approach allocated `O(B × T × H × D)` tensors 1024 times per sequence — a 1024× amplification of copy cost. Persistent cache pays the insertion cost once per sequence join and removal once per leave.
+
+**Why `max-autotune-no-cudagraphs` for torch.compile:**
+`reduce-overhead` internally attempts CUDA graph capture which breaks with dynamic batch sizes. `max-autotune-no-cudagraphs` runs Triton autotuning to find the best kernel config for H200 (wgmma instructions for large GEMMs in MoE experts) without requiring static shapes.
+
+**Why SDPA over Flash Attention:**
+`flash-attn` package requires CUDA 12.x; this node has CUDA 13.0 against PyTorch built for 12.8 → install fails. SDPA (`torch.nn.functional.scaled_dot_product_attention`) uses cuDNN FlashAttention kernels automatically on H200 without the package.
