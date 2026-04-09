@@ -143,28 +143,75 @@ OpenAI-compatible chat completions (non-streaming only).
 
 ## Quick Start
 
-### 1. Install the harness
+### 1. Install dependencies
 
 ```bash
-uv venv && uv pip install -e .
+uv venv && uv pip install -e ".[server]"
 ```
 
-### 2. Check your server is conformant
+### 2. Start the inference server
 
+**Single GPU (development / testing):**
 ```bash
-python -m eval.check_server --base-url http://localhost:8000
+MODEL_PATH=/path/to/Qwen3.5-35B-A3B \
+CUDA_VISIBLE_DEVICES=4 \
+./start.sh 9004
 ```
 
-### 3. Run correctness eval (GSM8K-CoT, 200 problems)
-
+**Multi-GPU data-parallel (production, 4 workers on GPUs 4–7):**
 ```bash
-python -m eval.correctness.run_correctness --base-url http://localhost:8000
+MODEL_PATH=/path/to/Qwen3.5-35B-A3B \
+WORKER_GPUS="4 5 6 7" \
+./start_multi.sh
 ```
 
-### 4. Run throughput benchmark
+`start_multi.sh` launches one worker per GPU (ports 9010–9013) plus a least-connections proxy on port 9004. It polls `/health` on every worker before starting the proxy — wait for the ready banner (~90s):
+
+```
+================================================================
+ Inference cluster READY
+ Proxy:   http://0.0.0.0:9004
+ Workers: http://localhost:9010 http://localhost:9011 ...
+================================================================
+```
+
+Worker logs stream to `logs/worker_gpuN.log`.
+
+**Environment variables:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `MODEL_PATH` | `Qwen/Qwen3.5-35B-A3B` | Local path or HF hub ID |
+| `WORKER_GPUS` | `4 5 6 7` | Space-separated CUDA device IDs |
+| `MAX_BATCH_SIZE` | `64` | Max active sequences per worker |
+| `USE_COMPILE` | `0` | Set to `1` to enable `torch.compile` |
+
+### 3. Check your server is conformant
 
 ```bash
-python -m eval.throughput.run_throughput --base-url http://localhost:8000
+python -m eval.check_server --base-url http://localhost:9004
+```
+
+### 4. Run correctness eval (GSM8K-CoT, 200 problems)
+
+```bash
+python -m eval.correctness.run_correctness --base-url http://localhost:9004
+```
+
+### 5. Run throughput benchmark
+
+```bash
+python -m eval.throughput.run_throughput \
+  --base-url http://localhost:9004 \
+  --output results/throughput_$(date +%Y%m%d_%H%M).json
+```
+
+**Quick smoke test (faster, 3 concurrency levels, 8 requests each):**
+```bash
+python -m eval.throughput.run_throughput \
+  --base-url http://localhost:9004 \
+  --concurrency 1 4 8 \
+  --num-requests 8
 ```
 
 ## Evaluation Details

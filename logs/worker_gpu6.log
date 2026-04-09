@@ -1,0 +1,19 @@
+INFO:     Started server process [723599]
+INFO:     Waiting for application startup.
+2026-04-09 16:57:42,111 INFO server.engine_continious: Loading tokenizer from /mnt/data/mghanmi/.cache/huggingface/hub/models--Qwen--Qwen3.5-35B-A3B/snapshots/ec2d4ece1ffb563322cbee9a48fe0e3fcbce0307
+2026-04-09 16:57:43,396 INFO server.engine_continious: Loading model (BF16, SDPA, single GPU)
+`torch_dtype` is deprecated! Use `dtype` instead!
+The fast path is not available because one of the required library is not installed. Falling back to torch implementation. To install follow https://github.com/fla-org/flash-linear-attention#installation and https://github.com/Dao-AILab/causal-conv1d
+Loading weights:   0%|          | 0/693 [00:00<?, ?it/s]Loading weights:  83%|████████▎ | 574/693 [00:00<00:00, 5735.83it/s]Loading weights: 100%|██████████| 693/693 [00:00<00:00, 5675.94it/s]
+2026-04-09 16:57:55,351 INFO server.engine_continious: Model loaded — 34660610688 parameters
+2026-04-09 16:57:55,352 INFO server.main: Server ready
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:9012 (Press CTRL+C to quit)
+INFO:     127.0.0.1:48174 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38324 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38324 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38324 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41552 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41560 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55730 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55732 - "POST /v1/chat/completions HTTP/1.1" 200 OK

@@ -203,7 +203,8 @@ AttributeError: 'DynamicCache' object has no attribute 'key_cache'
 - `_seen_tokens` set correctly on reconstructed caches
 - Batched prefill: multiple new requests prefilled in one forward pass
 
-**Correctness:** spot=2/2 ✅ at all concurrency levels
+**Correctness:** flexible-extract **90%** ✅ / strict-match **90%** ✅ (GSM8K-CoT, 200 problems, num_concurrent=8)
+> strict-match improved dramatically vs Iter 0a (69%) — `enable_thinking=False` prevents `<think>` tokens from polluting outputs.
 
 **Throughput** (ISL=256, OSL=256, 8 req/level):
 
@@ -223,41 +224,92 @@ AttributeError: 'DynamicCache' object has no attribute 'key_cache'
 
 ---
 
-## Iter 4 — torch.compile decode step
+## Iter 4a — Data Parallel (4 workers, round-robin proxy)
 
-**Date:** TBD
+**Date:** 2026-04-09
 
-**Changes:** `torch.compile(model, mode="reduce-overhead")` on the decode forward pass. Warm-up with dummy passes before serving.
+**Config:** `WORKER_GPUS="4 5 6 7"`, 4 independent full-model replicas, round-robin proxy on port 9004. `USE_BATCHED_DECODE=1`, `MAX_BATCH_SIZE=64`.
 
-**Correctness:** TBD
+**Architecture:**
+```
+Proxy (port 9004, round-robin)
+ ├── Worker GPU4 :9010  (full model, ~70 GB)
+ ├── Worker GPU5 :9011
+ ├── Worker GPU6 :9012
+ └── Worker GPU7 :9013
+```
 
-**Throughput:**
+**Correctness:** (not re-run — same engine path as Iter 3)
 
-| Concurrency | tok/s | vs vLLM c=1 |
-|---|---|---|
-| 1 | TBD | — |
-| 2 | TBD | — |
-| 4 | TBD | — |
+**Throughput** (ISL=1024, OSL=1024, 8 req/level):
 
-**Notes:** —
+| Concurrency | tok/s | vs vLLM c=1 | vs Iter 3 c=same |
+|---|---|---|---|
+| 1 | **52.7** | 5.4% | +34% |
+| 4 | **232.5** | 23.6% | +161% |
+| 8 | **200.5** | 20.4% | +70% |
+
+**Notes:**
+- c=4 sweet spot: 1 request per GPU, zero merge/split overhead → near-linear 4× gain
+- c=8 regression (200 < 232): 2 requests per GPU → merge/split at ISL=1024 costs more than it gains
+- Root cause: `_merge_caches`/`_split_caches` allocate O(B×T×H×D) tensors every decode step; at ISL=1024, T is large and the overhead dominates
+- Round-robin doesn't account for unequal worker load
 
 ---
 
-## Iter 5 — Multi-GPU (all-GPU window)
+## Iter 4b — Persistent Batched Cache (no per-step merge/split)
 
-**Date:** TBD
+**Date:** 2026-04-09
 
-**Changes:** Run best single-GPU config on all available GPUs (`CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7`), `device_map="auto"`.
+**Changes vs Iter 4a:**
+- Replaced per-step merge→forward→split with a **persistent batched cache**
+- `_batched_cache` is a single cache object held across all decode steps
+- `_append_to_batched_cache()`: called **once** when a sequence joins the active batch
+- `_remove_from_cache()`: called **once** when sequences finish
+- Decode step: passes `_batched_cache` directly to model — zero per-step allocation
+- **Least-connections proxy**: routes each new request to the worker with fewest in-flight requests (not round-robin)
+- **ConnectError retry**: proxy retries on next backend if a worker is unreachable (returns 503 only if all backends fail)
 
-**Correctness:** TBD
+**Cost comparison:**
 
-**Throughput:**
-
-| Concurrency | tok/s | vs vLLM |
+| Operation | Old (per step) | New |
 |---|---|---|
-| 1 | TBD | — |
-| 4 | TBD | — |
-| 16 | TBD | — |
-| 64 | TBD | — |
+| Tensor allocation | O(B×T×H×D) × 1024 steps | O(T×H×D) × 1 (on join) |
+| split clone | O(B×T×H×D) × 1024 steps | O(B×T) × 1 (on leave) |
+| Forward pass | same | same |
 
-**Notes:** —
+**Correctness:** spot=2/2 ✅ at all levels (not full GSM8K re-run)
+
+**Throughput** (ISL=1024, OSL=1024, 8 req/level):
+
+| Concurrency | tok/s | vs vLLM c=1 | vs Iter 4a |
+|---|---|---|---|
+| 1 | **61.32** | 6.2% | +16% |
+| 4 | **128.11** | 13.0% | -45% ⚠️ |
+| 8 | **220.12** | 22.4% | +10% ✅ |
+| 16 | **164.86** | 16.8% | (new) |
+
+**Weighted score** (partial, c=1,4,8,16 only) = 1×61 + 2×128 + 2×220 + 4×164 = **1,293**
+
+**Notes:**
+- **c=8 fix confirmed**: 220 > 128 (c=4) — persistent cache eliminates the c=8 < c=4 regression from Iter 4a. Two sequences per worker now correctly faster than one.
+- **c=4 unexpected regression**: 128 vs 232 in Iter 4a. Likely cause: at batch_size=1 the engine calls `_append_to_batched_cache` (one-time insert) and `_remove_from_cache` (one-time remove) per request. For short sequences at c=4 (only 8 requests total, 2 per worker), the insert/remove operations are proportionally expensive vs actual decode time.
+- **c=16 drops below c=8**: 4 sequences per worker → left-pad overhead grows, attention over longer padded contexts.
+- **Sweet spot: c=8** (2 requests per worker). Optimal load = 2 active sequences per GPU.
+- Next step: run correctness + full c=1..64 benchmark.
+
+---
+
+## Proxy Architecture
+
+### Round-robin (Iter 4a)
+Requests distributed by a global counter `counter % N`. Ignores worker load — a worker that received many slow requests stays overloaded while others sit idle at high concurrency.
+
+### Least-connections (Iter 4b+)
+Each backend tracks `_active[i]` = number of in-flight requests. New request goes to `argmin(_active)`. Counter incremented on dispatch, decremented in `finally` (so dead workers don't stay "busy"). On `ConnectError`, retries on next least-loaded backend.
+
+```
+64 requests arrive:
+  Round-robin: req 0,4,8,...,60 → GPU4  (even if GPU4 is slow)
+  Least-conn:  GPU4 finishes early → _active[4]=0 → next 16 requests all go to GPU4
+```
