@@ -8,6 +8,7 @@ dependencies = [
     "aiohttp>=3.9",
     "lm-eval[api]>=0.4.4",
     "transformers>=4.50",
+    "accelerate>=0.30",
     "tabulate",
     "tqdm",
     "numpy",
@@ -19,7 +20,6 @@ server = [
     "fastapi>=0.111",
     "uvicorn[standard]>=0.29",
     "uvloop>=0.19",
-    "accelerate>=0.30",
     "torch>=2.3",
     "safetensors>=0.4",
 ]

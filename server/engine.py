@@ -127,21 +127,17 @@ class InferenceEngine:
     # ------------------------------------------------------------------
 
     def _apply_chat_template(self, messages: list[dict]) -> str:
-        """Format messages, disabling thinking mode."""
-        try:
-            return self.tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=True,
-                enable_thinking=False,
-            )
-        except TypeError:
-            # Fallback if enable_thinking is not supported by this tokenizer version
-            return self.tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=True,
-            )
+        """Format messages with thinking enabled.
+
+        We allow the model to think internally (improves quality and CoT format),
+        but strip <think>...</think> blocks before returning to the client.
+        The server must not emit <think> tags — stripping happens in _strip_thinking().
+        """
+        return self.tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
 
     def _strip_thinking(self, text: str) -> str:
         """Remove <think>…</think> blocks if the model emits them."""
