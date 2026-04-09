@@ -20,3 +20,11 @@ ATTN_IMPLEMENTATION = os.environ.get("ATTN_IMPLEMENTATION", "sdpa")
 #   1 — static batching, SDPA attention    (Iter 1 baseline)
 #   2 — continuous batching, SDPA          (Iter 2, default)
 ENGINE_MODE = int(os.environ.get("ENGINE_MODE", "2"))
+
+# torch.compile on the model forward pass (10-20% gain, reduce-overhead mode)
+USE_COMPILE = os.environ.get("USE_COMPILE", "0") == "1"
+
+# Decode strategy for continuous engine (ENGINE_MODE=2):
+#   False — per-sequence decode (proven, ~42 tok/s at c=1, no scaling)
+#   True  — batched decode (all seqs in one forward pass, scales with concurrency)
+USE_BATCHED_DECODE = os.environ.get("USE_BATCHED_DECODE", "0") == "1"
